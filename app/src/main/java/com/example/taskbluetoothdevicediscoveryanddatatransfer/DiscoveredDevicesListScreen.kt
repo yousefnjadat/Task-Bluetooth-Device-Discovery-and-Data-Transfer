@@ -3,6 +3,8 @@ package com.example.taskbluetoothdevicediscoveryanddatatransfer
 import android.Manifest
 import android.bluetooth.BluetoothDevice
 import android.content.pm.PackageManager
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +23,11 @@ import androidx.core.app.ActivityCompat
 
 
 @Composable
-fun DiscoveredDevicesListScreen(discoveredDevices: List<BluetoothDevice>, onScanClick: () -> Unit) {
+fun DiscoveredDevicesListScreen(
+    discoveredDevices: List<BluetoothDevice>,
+    onScanClick: () -> Unit,
+    onDeviceClick: (BluetoothDevice) -> Unit // Add this for connecting
+) {
     val context = LocalContext.current
     Spacer(modifier = Modifier.height(16.dp))
 
@@ -39,7 +45,7 @@ fun DiscoveredDevicesListScreen(discoveredDevices: List<BluetoothDevice>, onScan
     LazyColumn {
         items(discoveredDevices.size) { index ->
             val device = discoveredDevices[index]
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
@@ -48,11 +54,16 @@ fun DiscoveredDevicesListScreen(discoveredDevices: List<BluetoothDevice>, onScan
                         context, Manifest.permission.BLUETOOTH_CONNECT
                     ) != PackageManager.PERMISSION_GRANTED
                 ) {
-                    return@Row
+                    return@Column
                 }
                 Text(text = "${device.name ?: "Unknown Device"} - ${device.address}")
                 Spacer(modifier = Modifier.weight(1f))
+                Button(onClick = { onDeviceClick(device) }) {
+
+                    Text("Connect")
+                }
             }
         }
     }
 }
+
