@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,12 +25,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val REQUEST_PERMISSIONS = 2
     private val pairedBluetoothDevices = mutableStateListOf<BluetoothDevice>()
     private val discoveredBluetoothDevices = mutableStateListOf<BluetoothDevice>()
+    private lateinit var fileUri: Uri // Store the selected file URI for file transfer
+    private var connectedDevice: BluetoothDevice? = null // Store the connected device
+    private var bluetoothSocket: BluetoothSocket? = null // Store the Bluetooth socket
 
     // Required permissions for Bluetooth operations
     private val requiredPermissions = arrayOf(
@@ -40,8 +46,11 @@ class MainActivity : ComponentActivity() {
         Manifest.permission.BLUETOOTH,
     )
 
-    // Launcher for enabling Bluetooth
+    // Launcher for enabling Bluetooth and file picker
     private lateinit var enableBluetoothLauncher: ActivityResultLauncher<Intent>
+    private lateinit var filePickerLauncher: ActivityResultLauncher<Intent>
+
+    val MY_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +65,16 @@ class MainActivity : ComponentActivity() {
                     println("Bluetooth not enabled")
                 }
             }
+
+        // Initialize file picker launcher
+        filePickerLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            result?.data?.data?.let { uri ->
+                fileUri = uri // Store the URI of the selected file
+                Toast.makeText(this, "File selected: $uri", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         setContent {
             val bluetoothAdapter: BluetoothAdapter? = getBluetoothAdapter()
@@ -82,8 +101,21 @@ class MainActivity : ComponentActivity() {
                 },
                 onDeviceClick = { device ->
                     connectToDevice(device)
-                } // Pass device connection logic
-            )
+                },
+                onSendFileClick = {
+                    // Trigger file sending once a device is connected
+                    if (connectedDevice != null) {
+                        // Check if a file URI is selected
+                        if (fileUri.path?.isNotEmpty() == true) {
+                            sendFile(fileUri)
+                        } else {
+                            selectFile() // Open file picker if no file is selected
+                        }
+                    } else {
+                        Toast.makeText(this, "Not connected to this device", Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                })
         }
     }
 
@@ -164,7 +196,7 @@ class MainActivity : ComponentActivity() {
         bluetoothAdapter.startDiscovery()
 
         if (bluetoothAdapter.scanMode != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE) {
-            val requestCode = 1;
+            val requestCode = 1
             val discoverableIntent: Intent =
                 Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
                     putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
@@ -184,66 +216,137 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    val MY_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
+    //==================================================================================================================
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        // Check if the device is already paired
         if (device.bondState != BluetoothDevice.BOND_BONDED) {
             println("Device is not paired, initiating pairing...")
             device.createBond() // This will initiate the pairing process
+
+            // Register a BroadcastReceiver to listen for bond state changes
+            val bondReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (BluetoothDevice.ACTION_BOND_STATE_CHANGED == intent.action) {
+                        val state = intent.getIntExtra(
+                            BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR
+                        )
+                        if (state == BluetoothDevice.BOND_BONDED) {
+                            println("Device paired successfully, now connecting...")
+                            initiateBluetoothConnection(device)
+                            context.unregisterReceiver(this) // Unregister receiver after use
+                        }
+                    }
+                }
+            }
+            registerReceiver(bondReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
         } else {
             println("Device is already paired, connecting...")
-            // Proceed to connect if the device is already paired
             initiateBluetoothConnection(device)
         }
     }
 
+
     @SuppressLint("MissingPermission")
     private fun initiateBluetoothConnection(device: BluetoothDevice) {
-        val socket: BluetoothSocket? = try {
-            device.createRfcommSocketToServiceRecord(MY_UUID) // Use the correct UUID
+        var socket: BluetoothSocket? = null
+        try {
+            // Attempt to create an RFCOMM socket
+            socket = device.createRfcommSocketToServiceRecord(MY_UUID)
         } catch (e: IOException) {
             e.printStackTrace()
-            null
+            println("Error creating RFCOMM socket")
+        }
+
+        // Fallback to reflection-based connection in case the standard method fails
+        if (socket == null) {
+            try {
+                socket = device.javaClass.getMethod("createRfcommSocket", Int::class.java)
+                    .invoke(device, 1) as BluetoothSocket
+                println("Fallback RFCOMM socket created using reflection")
+            } catch (e: Exception) {
+                e.printStackTrace()
+                println("Failed to create fallback RFCOMM socket")
+            }
         }
 
         socket?.let {
             try {
-                val bluetoothAdapter:BluetoothAdapter? = getBluetoothAdapter()
-                // Cancel discovery because it will slow down the connection
-                bluetoothAdapter?.cancelDiscovery()
+                val bluetoothAdapter: BluetoothAdapter? = getBluetoothAdapter()
+                bluetoothAdapter?.cancelDiscovery() // Cancel discovery to improve connection speed
 
                 it.connect() // Blocking call to connect
                 println("Connected to ${device.name}")
 
-                // Now you can start data transfer with input/output streams
-                val inputStream = it.inputStream
-                val outputStream = it.outputStream
+                connectedDevice = device // Set the connected device
+                bluetoothSocket = it // Store the Bluetooth socket
 
-                // Example: Send data to the connected device
-                val message = "Hello Device!"
-                outputStream.write(message.toByteArray())
+                // Notify the user about successful connection
+                Toast.makeText(this, "Connected to ${device.name}", Toast.LENGTH_SHORT).show()
+
             } catch (e: IOException) {
                 e.printStackTrace()
                 println("Failed to connect to ${device.name}")
+
                 try {
-                    it.close()
+                    it.close() // Close the socket if the connection fails
                 } catch (closeException: IOException) {
                     closeException.printStackTrace()
                 }
+
+                // Handle connection failure
+                Toast.makeText(this, "Connection failed. Please try again.", Toast.LENGTH_SHORT)
+                    .show()
+            }
+        } ?: println("Bluetooth socket is null, connection failed")
+    }
+
+
+    // Open the file picker to select a file
+    private fun selectFile() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "*/*"
+        }
+        filePickerLauncher.launch(intent)
+    }
+
+    // Send the selected file to the connected device
+    @SuppressLint("MissingPermission")
+    private fun sendFile(fileUri: Uri) {
+        if (bluetoothSocket == null || !bluetoothSocket!!.isConnected) {
+            Toast.makeText(this, "Not connected to any device", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val inputStream: InputStream? = contentResolver.openInputStream(fileUri)
+                val outputStream: OutputStream? = bluetoothSocket?.outputStream
+
+                inputStream?.let { input ->
+                    outputStream?.let { output ->
+                        val buffer = ByteArray(1024) // Buffer size
+                        var bytesRead: Int
+
+                        // Send file in chunks
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                        }
+
+                        println("File transfer completed.")
+                    }
+                }
+            } catch (e: IOException) {
+                e.printStackTrace()
+                Toast.makeText(this@MainActivity, "File transfer failed", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
 
-
-
-    // Unregister receiver and cancel discovery on destroy
-    @SuppressLint("MissingPermission")
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(receiver)
-        getBluetoothAdapter()?.cancelDiscovery()
+        unregisterReceiver(receiver) // Unregister the receiver
+        bluetoothSocket?.close() // Close the Bluetooth socket
     }
 }

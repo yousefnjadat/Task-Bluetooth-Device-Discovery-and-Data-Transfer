@@ -25,7 +25,6 @@ import androidx.core.app.ActivityCompat
 @Composable
 fun DiscoveredDevicesListScreen(
     discoveredDevices: List<BluetoothDevice>,
-    onScanClick: () -> Unit,
     onDeviceClick: (BluetoothDevice) -> Unit // Add this for connecting
 ) {
     val context = LocalContext.current
@@ -36,11 +35,6 @@ fun DiscoveredDevicesListScreen(
         style = MaterialTheme.typography.h6,
         textDecoration = TextDecoration.Underline
     )
-    // Scan button
-    Button(onClick = { onScanClick() }) {
-        Text("Scan for Devices")
-    }
-
     Spacer(modifier = Modifier.height(8.dp))
     LazyColumn {
         items(discoveredDevices.size) { index ->

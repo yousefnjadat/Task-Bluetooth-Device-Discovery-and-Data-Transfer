@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -20,12 +21,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 
 @Composable
 fun PairedDevicesListScreen(
     pairedDevices: List<BluetoothDevice>,
-    onDeviceClick: (BluetoothDevice) -> Unit // Add this for connecting
+    onDeviceClick: (BluetoothDevice) -> Unit, // Add this for connecting
+    onSendFileClick: () -> Unit
 ) {
     val context = LocalContext.current
     Spacer(modifier = Modifier.height(16.dp))
@@ -35,7 +38,7 @@ fun PairedDevicesListScreen(
         style = MaterialTheme.typography.h6,
         textDecoration = TextDecoration.Underline
     )
-    LazyColumn {
+    LazyColumn(modifier = Modifier.height(200.dp)) {
         items(pairedDevices.size) { index ->
             val device = pairedDevices[index]
             Column(
@@ -50,11 +53,13 @@ fun PairedDevicesListScreen(
                 ) {
                     return@Column
                 }
-                Text(text = "${device.name ?: "Unknown Device"} - ${device.address}")
-//                Spacer(modifier = Modifier.weight(1f))
-//                Button(onClick = { onDeviceClick(device) }) {
-//                    Text("Connect")
-//                }
+                ClickableText(
+                    text = AnnotatedString("${device.name ?: "Unknown Device"} - ${device.address}"),
+                    onClick = { onDeviceClick(device) }
+                )
+                Button(onClick = { onSendFileClick() }) {
+                    Text(text = "Send File")
+                }
             }
         }
     }
