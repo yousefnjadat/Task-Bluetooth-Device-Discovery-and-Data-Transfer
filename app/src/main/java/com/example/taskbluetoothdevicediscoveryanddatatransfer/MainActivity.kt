@@ -8,28 +8,20 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.annotation.CallSuper
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.example.taskbluetoothdevicediscoveryanddatatransfer.ui.theme.TaskBluetoothDeviceDiscoveryAndDataTransferTheme
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
 import kotlin.random.Random
+import java.text.SimpleDateFormat
+import java.util.*
 
+
+@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
 
     private val STRATEGY = Strategy.P2P_CLUSTER
@@ -37,6 +29,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var connectionsClient: ConnectionsClient
     private val REQUEST_CODE_REQUIRED_PERMISSIONS = 1
     private val txtLogState = mutableStateOf("")
+    private val messages = mutableStateListOf<ChatMessage>()
+    private var isConnected by mutableStateOf(false)
     val name = Random.nextInt().toString()
 
     val REQUIRED_PERMISSIONS =
@@ -46,7 +40,7 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.NEARBY_WIFI_DEVICES, // Required for Android 13+
+                Manifest.permission.NEARBY_WIFI_DEVICES,
             )
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -64,42 +58,36 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val txtLog by txtLogState
-                    var textField by remember { mutableStateOf("Hello") }
-                    Column(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
+                    if (isConnected) {
+                        ChatScreen(messages) { messageText ->
+                            val currentTime =
+                                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+//                            messages.add(ChatMessage(messageText, currentTime, true))
+                            sendData(messageText) // Send the message
+                        }
+                    } else {
                         Column(
-                            modifier = Modifier.weight(weight = 0.3f, fill = true)
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Button(onClick = {
                                 startAdvertising()
                                 startDiscovery()
                             }) {
-                                Text(text = "Start Advertising")
+                                Text("Start Advertising")
                             }
-                            TextField(value = textField,
-                                onValueChange = { textField = it },
-                                label = { Text("Label") })
-                            Row {
-                                Button(onClick = {
-                                    sendData(textField)
-                                }) {
-                                    Text(text = "Send Data")
-                                }
-                                Button(onClick = {
-                                    txtLogState.value = ""
-                                }) {
-                                    Text(text = "Clear Log")
-                                }
+                            Button(onClick = {
+                                txtLogState.value = ""
+                            }) {
+                                Text(text = "Clear Log")
                             }
-                        }
-                        Column(
-                            modifier = Modifier
-                                .verticalScroll(rememberScrollState())
-                                .weight(weight = 0.7f, fill = true)
-                        ) {
-                            Text(txtLog)
+                            // Your existing UI components...
+                            TextField(
+                                value = txtLogState.value,
+                                onValueChange = { txtLogState.value = it },
+                                label = { Text("Log") }
+                            )
                         }
                     }
                 }
@@ -110,7 +98,6 @@ class MainActivity : ComponentActivity() {
     @CallSuper
     override fun onStart() {
         super.onStart()
-        // Request permission for NEARBY_WIFI_DEVICES on Android 13+.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(
@@ -119,7 +106,6 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-        // Request other necessary permissions
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(REQUIRED_PERMISSIONS, REQUEST_CODE_REQUIRED_PERMISSIONS)
         }
@@ -142,6 +128,8 @@ class MainActivity : ComponentActivity() {
             updateText("sendPayload: failed")
         }.addOnSuccessListener {
             updateText("sendPayload: success $textField")
+            val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            messages.add(ChatMessage(textField, currentTime, true)) // Add received message to chat
         }
     }
 
@@ -175,6 +163,14 @@ class MainActivity : ComponentActivity() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             payload.asBytes()?.let {
                 val message = String(it, Charsets.UTF_8)
+                val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                messages.add(
+                    ChatMessage(
+                        message,
+                        currentTime,
+                        false
+                    )
+                ) // Add received message to chat
                 updateText("message: $message")
                 Log.e("POC", message)
             }
@@ -197,6 +193,7 @@ class MainActivity : ComponentActivity() {
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
             if (result.status.isSuccess) {
                 opponentEndpointId = endpointId
+                isConnected = true // Update connection state
                 connectionsClient.stopAdvertising()
                 connectionsClient.stopDiscovery()
                 updateText("connected to: $endpointId successfully")
@@ -207,6 +204,7 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onDisconnected(endpointId: String) {
+            isConnected = false // Update connection state
             updateText("disconnected: $endpointId")
             Log.e("POC", "Disconnected")
         }
